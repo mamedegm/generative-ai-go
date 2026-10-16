@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
@@ -418,4 +419,40 @@ func TestFunctionCallsAndFinishReason(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Verify that the iterator keeps reporting iterator.Done, not io.EOF, after
+// the last streamed response, and that a chat session records the streamed
+// reply in its history only once.
+func TestGenerateContentStreamDone(t *testing.T) {
+	const body = `[{"candidates": [{"index": 0, "content": {"role": "model", "parts": [{"text": "x"}]}, "finishReason": "STOP"}]}]`
+	checkDone := func(t *testing.T, iter *GenerateContentResponseIterator) {
+		t.Helper()
+		if _, err := iter.Next(); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 3; i++ {
+			if _, err := iter.Next(); err != iterator.Done {
+				t.Fatalf("call %d after the last response: got %v, want iterator.Done", i+1, err)
+			}
+		}
+	}
+
+	t.Run("model", func(t *testing.T) {
+		client, _ := newFakeClient(t, body)
+		checkDone(t, client.GenerativeModel("gemini-1.5-flash").GenerateContentStream(context.Background(), Text("hi")))
+	})
+
+	t.Run("chat", func(t *testing.T) {
+		client, _ := newFakeClient(t, body)
+		cs := client.GenerativeModel("gemini-1.5-flash").StartChat()
+		checkDone(t, cs.SendMessageStream(context.Background(), Text("hi")))
+		want := []*Content{
+			{Role: "user", Parts: []Part{Text("hi")}},
+			{Role: "model", Parts: []Part{Text("x")}},
+		}
+		if diff := cmp.Diff(want, cs.History); diff != "" {
+			t.Errorf("history mismatch (-want +got):\n%s", diff)
+		}
+	})
 }
