@@ -257,6 +257,8 @@ func (iter *GenerateContentResponseIterator) Next() (*GenerateContentResponse, e
 	resp, err := iter.sc.Recv()
 	iter.err = err
 	if err == io.EOF {
+		// Keep returning iterator.Done on later calls.
+		iter.err = iterator.Done
 		if iter.cs != nil && iter.merged != nil {
 			iter.cs.addToHistory(iter.merged.Candidates)
 		}
